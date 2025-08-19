@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -13,6 +15,7 @@ import (
 type model struct {
 	spinner spinner.Model
 	done    bool
+	timeout time.Duration
 }
 
 type finishedMsg struct{}
@@ -20,7 +23,7 @@ type finishedMsg struct{}
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
-		tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+		tea.Tick(m.timeout, func(t time.Time) tea.Msg {
 			return finishedMsg{}
 		}),
 	)
@@ -28,6 +31,12 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		// Handle Ctrl+C within Bubbletea
+		if msg.String() == "ctrl+c" {
+			cleanup()
+			return m, tea.Quit
+		}
 	case finishedMsg:
 		m.done = true
 		return m, tea.Quit
@@ -69,10 +78,41 @@ func main() {
 			s := spinner.New()
 			s.Spinner = spinner.Dot
 
-			p := tea.NewProgram(model{spinner: s})
-			if _, err := p.Run(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+			// Set up signal handling for SIGTERM (Ctrl+C is handled by Bubble Tea)
+			sigTermChan := make(chan os.Signal, 1)
+			signal.Notify(sigTermChan, syscall.SIGTERM)
+			defer signal.Stop(sigTermChan)
+
+			p := tea.NewProgram(model{
+				spinner: s,
+				timeout: time.Duration(timeout) * time.Second,
+			})
+
+			errChan := make(chan error, 1)
+			go func() {
+				_, err := p.Run()
+				errChan <- err
+			}()
+
+			// Wait for completion or SIGTERM
+			select {
+			case sig := <-sigTermChan:
+				if verbose {
+					fmt.Printf("\nReceived signal: %v\n", sig)
+				}
+				cleanup()
+
+				// Wait for Bubble Tea
+				p.Send(tea.Quit())
+				<-errChan
+
+				os.Exit(0)
+
+			case err := <-errChan:
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		},
 	}
@@ -114,4 +154,8 @@ func main() {
 
 func version() {
 	fmt.Println("age-op version 0.1.0")
+}
+
+func cleanup() {
+	fmt.Println("TODO: Clean up")
 }

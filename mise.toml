@@ -1,6 +1,10 @@
 [tools]
 ## Stack
 go = "latest"
+node = "lts"
+
+## Tools
+"npm:@anthropic-ai/claude-code" = "latest"
 
 [settings]
 # Enable extra features
