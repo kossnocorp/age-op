@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -13,9 +15,10 @@ import (
 )
 
 type model struct {
-	spinner spinner.Model
-	done    bool
-	timeout time.Duration
+	spinner    spinner.Model
+	done       bool
+	timeout    time.Duration
+	secretPath *string
 }
 
 type finishedMsg struct{}
@@ -32,19 +35,20 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Handle Ctrl+C within Bubbletea
 		if msg.String() == "ctrl+c" {
-			cleanup()
 			return m, tea.Quit
 		}
+
 	case finishedMsg:
 		m.done = true
 		return m, tea.Quit
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 	}
+
 	return m, nil
 }
 
@@ -78,15 +82,24 @@ func main() {
 			s := spinner.New()
 			s.Spinner = spinner.Dot
 
+			var secretPath *string
+			if rand.Float32() < 0.5 {
+				tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("age-key-%d.txt", rand.Int63()))
+				secretPath = &tmpPath
+			}
+
 			// Set up signal handling for SIGTERM (Ctrl+C is handled by Bubble Tea)
 			sigTermChan := make(chan os.Signal, 1)
 			signal.Notify(sigTermChan, syscall.SIGTERM)
 			defer signal.Stop(sigTermChan)
 
-			p := tea.NewProgram(model{
-				spinner: s,
-				timeout: time.Duration(timeout) * time.Second,
-			})
+			m := model{
+				spinner:    s,
+				timeout:    time.Duration(timeout) * time.Second,
+				secretPath: secretPath,
+			}
+
+			p := tea.NewProgram(m)
 
 			errChan := make(chan error, 1)
 			go func() {
@@ -100,7 +113,7 @@ func main() {
 				if verbose {
 					fmt.Printf("\nReceived signal: %v\n", sig)
 				}
-				cleanup()
+				cleanup(m.secretPath)
 
 				// Wait for Bubble Tea
 				p.Send(tea.Quit())
@@ -109,6 +122,8 @@ func main() {
 				os.Exit(0)
 
 			case err := <-errChan:
+				cleanup(m.secretPath)
+
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
@@ -156,6 +171,9 @@ func version() {
 	fmt.Println("age-op version 0.1.0")
 }
 
-func cleanup() {
-	fmt.Println("TODO: Clean up")
+func cleanup(tempAgeKeyPath *string) {
+	fmt.Println("CLEAN UP")
+	if tempAgeKeyPath != nil {
+		os.Remove(*tempAgeKeyPath)
+	}
 }
